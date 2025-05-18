@@ -27,7 +27,7 @@ clean:
 # in various formats.
 
 # File name format *inside* the ZIP file
-ROOT_CERTS := certificates_pkcs7_v5_13_dod
+ROOT_CERTS := Certificates_PKCS7_v5_14_DoD
 
 # Format of the ZIP file name itself
 ROOT_CERTS_FILE_NAME := unclass-certificates_pkcs7_DoD
@@ -38,7 +38,7 @@ ROOT_CERTS_FILE_NAME := unclass-certificates_pkcs7_DoD
 # convert into a bunch of concatenated individual PEM-format certs.
 # unzip -p is used to dump directly to stdout
 DoDRoots.crt: $(ROOT_CERTS_FILE_NAME).zip
-	unzip -p "$<" '$(ROOT_CERTS)/$(ROOT_CERTS)_der.p7b' | openssl pkcs7 -inform der -out "$@" -print_certs
+	unzip -p "$<" '$(ROOT_CERTS)/$(ROOT_CERTS).der.p7b' | openssl pkcs7 -inform der -out "$@" -print_certs
 
 # As of 2019-06-27 this worked
 # As of 2022-04-25 this still works
