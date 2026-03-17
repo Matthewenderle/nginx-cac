@@ -2,3 +2,4 @@
 *.crt
 *.zip
 .gitignore
+.vscode

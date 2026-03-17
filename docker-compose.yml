@@ -1,0 +1,6 @@
+services:
+  nginx-cac:
+    image: ghcr.io/matthewenderle/nginx-cac:latest
+    ports:
+      - "8443:443"
+    restart: unless-stopped

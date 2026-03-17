@@ -35,6 +35,41 @@ This will:
 
 By default the new Docker image is called "nginx-cac".
 
+# Publishing To GHCR
+
+This repository now supports publishing a container image to GitHub Container
+Registry (GHCR) via GitHub Actions.
+
+The workflow file is [`.github/workflows/publish-ghcr.yml`](.github/workflows/publish-ghcr.yml).
+
+It runs when you push to `main`, push a version tag like `v1.2.3`, or run it
+manually from the Actions tab.
+
+The pushed image name is:
+
+`ghcr.io/<owner>/nginx-cac`
+
+Where `<owner>` is your GitHub user or org name.
+
+If you push a tag like `v1.2.3`, the workflow also publishes
+`ghcr.io/<owner>/nginx-cac:v1.2.3`.
+
+# Running With Docker Compose
+
+If you do not want local `make` dependencies, use the published GHCR image.
+
+The included [`docker-compose.yml`](docker-compose.yml) uses:
+
+`ghcr.io/<owner>/nginx-cac:latest`
+
+Update `<owner>` in that file and then run:
+
+`docker compose up -d`
+
+To stop:
+
+`docker compose down`
+
 # Launching
 
 From there you can run it by using `make run`.
