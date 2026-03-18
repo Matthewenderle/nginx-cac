@@ -5,6 +5,87 @@ set -eu
 : "${POST_AUTH_REDIRECT_URI:=/auth/success}"
 : "${POST_AUTH_PROXY_UPSTREAM:=}"
 
+# Optional Let's Encrypt integration. If LE_DOMAIN is set and the caller did not
+# override certificate paths, default to the standard Certbot live paths.
+: "${LE_DOMAIN:=}"
+: "${LE_EMAIL:=}"
+
+if [ -z "${SERVER_NAME:-}" ]; then
+  if [ -n "$LE_DOMAIN" ]; then
+    SERVER_NAME="$LE_DOMAIN"
+  else
+    SERVER_NAME=localhost
+  fi
+fi
+
+: "${SSL_CERTIFICATE:=}"
+: "${SSL_CERTIFICATE_KEY:=}"
+if [ -z "$SSL_CERTIFICATE" ] && [ -n "$LE_DOMAIN" ]; then
+  SSL_CERTIFICATE="/etc/letsencrypt/live/${LE_DOMAIN}/fullchain.pem"
+fi
+if [ -z "$SSL_CERTIFICATE_KEY" ] && [ -n "$LE_DOMAIN" ]; then
+  SSL_CERTIFICATE_KEY="/etc/letsencrypt/live/${LE_DOMAIN}/privkey.pem"
+fi
+
+# If we defaulted to Let's Encrypt paths but the cert hasn't been issued yet,
+# fall back to the self-signed cert shipped in the image so nginx can boot and
+# serve the HTTP-01 challenge.
+if [ -n "$LE_DOMAIN" ]; then
+  if [ ! -f "$SSL_CERTIFICATE" ] || [ ! -f "$SSL_CERTIFICATE_KEY" ]; then
+    echo "LE_DOMAIN is set (${LE_DOMAIN}) but certificate files are missing; using bundled self-signed cert until certbot issues a real cert" >&2
+    SSL_CERTIFICATE=/etc/nginx/certificate.pem
+    SSL_CERTIFICATE_KEY=/etc/nginx/key.pem
+  fi
+fi
+
+# Default back to the self-signed cert shipped in the image.
+: "${SSL_CERTIFICATE:=/etc/nginx/certificate.pem}"
+: "${SSL_CERTIFICATE_KEY:=/etc/nginx/key.pem}"
+
+export SERVER_NAME SSL_CERTIFICATE SSL_CERTIFICATE_KEY
+
+# CAC / client certificate handling.
+# Default behavior remains strict: require a valid client cert.
+# Set REQUIRE_CLIENT_CERT=false to allow non-mTLS connections (nginx will request
+# a client cert but not require one).
+: "${REQUIRE_CLIENT_CERT:=true}"
+: "${SSL_VERIFY_CLIENT:=}"
+if [ -z "$SSL_VERIFY_CLIENT" ]; then
+  if [ "$REQUIRE_CLIENT_CERT" = "true" ]; then
+    SSL_VERIFY_CLIENT=on
+  else
+    SSL_VERIFY_CLIENT=optional
+  fi
+fi
+
+export SSL_VERIFY_CLIENT
+
+# HTTP/2 can be problematic behind some TLS-intercepting proxies.
+: "${ENABLE_HTTP2:=true}"
+: "${HTTP2_DIRECTIVE:=}"
+if [ -z "$HTTP2_DIRECTIVE" ]; then
+  if [ "$ENABLE_HTTP2" = "true" ]; then
+    HTTP2_DIRECTIVE='http2 on;'
+  else
+    HTTP2_DIRECTIVE=''
+  fi
+fi
+
+# Some SSL inspection proxies corrupt compressed JS/CSS responses (mismatched
+# Content-Encoding). In compatibility mode, default to requesting uncompressed
+# upstream responses.
+: "${UPSTREAM_ACCEPT_ENCODING:=}"
+if [ -z "$UPSTREAM_ACCEPT_ENCODING" ] && [ "$REQUIRE_CLIENT_CERT" != "true" ]; then
+  UPSTREAM_ACCEPT_ENCODING=identity
+fi
+
+export HTTP2_DIRECTIVE UPSTREAM_ACCEPT_ENCODING
+
+upstream_accept_encoding_directive=""
+if [ -n "$UPSTREAM_ACCEPT_ENCODING" ]; then
+  upstream_accept_encoding_directive="        proxy_set_header Accept-Encoding \"$UPSTREAM_ACCEPT_ENCODING\";"
+fi
+
 post_auth_target_path="$POST_AUTH_REDIRECT_URI"
 
 # Determine whether the caller provided a path redirect ("/foo") vs an absolute URL.
@@ -75,10 +156,13 @@ if [ -n "$POST_AUTH_PROXY_UPSTREAM" ]; then
         proxy_set_header X-Forwarded-Host \$host;
         proxy_set_header X-Original-URI \$request_uri;
 
+    $upstream_accept_encoding_directive
+
         # CAC / client-cert identity headers for the upstream.
         proxy_set_header X-Subject-DN \$ssl_client_s_dn;
         proxy_set_header X-Client-Verified \$ssl_client_verify;
         proxy_set_header X-Client-Serial \$ssl_client_serial;
+        proxy_set_header X-Client-Cert-Present \$client_cert_present;
 
         # Backward-compatible aliases (older versions of this image used these names).
         proxy_set_header X-SSL-User-DN \$ssl_client_s_dn;
@@ -107,10 +191,13 @@ EOF
         proxy_set_header X-Forwarded-Host \$host;
         proxy_set_header X-Original-URI \$request_uri;
 
+    $upstream_accept_encoding_directive
+
         # CAC / client-cert identity headers for the upstream.
         proxy_set_header X-Subject-DN \$ssl_client_s_dn;
         proxy_set_header X-Client-Verified \$ssl_client_verify;
         proxy_set_header X-Client-Serial \$ssl_client_serial;
+        proxy_set_header X-Client-Cert-Present \$client_cert_present;
 
         # Backward-compatible aliases (older versions of this image used these names).
         proxy_set_header X-SSL-User-DN \$ssl_client_s_dn;
@@ -153,6 +240,8 @@ fi
 # client certificate is re-checked on every new request rather than being carried over from
 # a cached TLS session.
 : "${RECHECK_CAC:=true}"
+: "${RECHECK_CAC_KEEPALIVE_TIMEOUT:=0}"
+: "${RECHECK_CAC_KEEPALIVE_REQUESTS:=1}"
 if [ "$RECHECK_CAC" = "true" ]; then
   cat > /tmp/recheck-cac.conf <<'EOF'
     # Disable TLS session tickets (RFC 5077) and server-side session ID cache so the
@@ -160,14 +249,12 @@ if [ "$RECHECK_CAC" = "true" ]; then
     ssl_session_tickets off;
     ssl_session_cache   off;
 
-    # Close the TCP connection after every response.
-    # This is the critical setting: as long as the TCP/TLS connection is kept
-    # alive, nginx does NOT re-run the TLS handshake between requests, so it
-    # cannot detect a removed CAC.  With keepalive_timeout 0 the browser gets
-    # "Connection: close" and must open a fresh TCP+TLS connection (full
-    # handshake, client-cert re-verified) for every subsequent request.
-    keepalive_timeout  0;
-    keepalive_requests 1;
+    # Keepalive behavior (defaults are strict: close after every response).
+    # If you see broken/partial JS/CSS assets through a proxy path, increase
+    # RECHECK_CAC_KEEPALIVE_TIMEOUT (example: 65s) and RECHECK_CAC_KEEPALIVE_REQUESTS
+    # (example: 1000) to allow connection reuse.
+    keepalive_timeout  ${RECHECK_CAC_KEEPALIVE_TIMEOUT};
+    keepalive_requests ${RECHECK_CAC_KEEPALIVE_REQUESTS};
 
     # Prevent the browser HTTP cache from serving stale pages without hitting
     # the network (and therefore without triggering a new TLS handshake).
@@ -185,9 +272,7 @@ cat > /tmp/auth-status-location.conf <<'EOF'
     location = /auth/status {
         add_header Content-Type  "application/json" always;
         add_header Cache-Control "no-store"          always;
-        # Any request that reaches this block has already passed the TLS client-cert
-        # handshake enforced at the server level (ssl_verify_client on).
-        return 200 '{"verified":true,"dn":"$ssl_client_s_dn","serial":"$ssl_client_serial"}';
+    return 200 "{\"verified\":$auth_verified,\"clientCertPresent\":$client_cert_present,\"verify\":\"$ssl_client_verify\",\"dn\":\"$ssl_client_s_dn\",\"serial\":\"$ssl_client_serial\"}";
     }
 EOF
 
@@ -201,7 +286,7 @@ sed "/__POST_AUTH_TARGET_LOCATION__/r /tmp/post-auth-location.conf" /etc/nginx/h
   | sed "/__MAIN_LOCATION__/d" \
   | sed "/__RECHECK_CAC_SETTINGS__/r /tmp/recheck-cac.conf" \
   | sed "/__RECHECK_CAC_SETTINGS__/d" \
-  | envsubst '${POST_AUTH_REDIRECT_URI}' \
+  | envsubst '${POST_AUTH_REDIRECT_URI} ${SERVER_NAME} ${SSL_CERTIFICATE} ${SSL_CERTIFICATE_KEY} ${SSL_VERIFY_CLIENT} ${HTTP2_DIRECTIVE}' \
   > /etc/nginx/http.d/default.conf
 
 exec /usr/sbin/nginx -g 'daemon off;'

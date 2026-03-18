@@ -5,10 +5,77 @@ services:
       POST_AUTH_REDIRECT_URI: ${POST_AUTH_REDIRECT_URI:-/auth/success}
       POST_AUTH_PROXY_UPSTREAM: ${POST_AUTH_PROXY_UPSTREAM:-}
       RECHECK_CAC: ${RECHECK_CAC:-true}
+      # If RECHECK_CAC=true, these control connection reuse.
+      # Defaults are strict: close after every response.
+      RECHECK_CAC_KEEPALIVE_TIMEOUT: ${RECHECK_CAC_KEEPALIVE_TIMEOUT:-0}
+      RECHECK_CAC_KEEPALIVE_REQUESTS: ${RECHECK_CAC_KEEPALIVE_REQUESTS:-1}
+      # Client-certificate behavior.
+      # Default: strict CAC required.
+      # Set REQUIRE_CLIENT_CERT=false to allow connections without a client cert.
+      REQUIRE_CLIENT_CERT: ${REQUIRE_CLIENT_CERT:-true}
+      # Advanced override (values: on|optional|off). Leave empty to derive from REQUIRE_CLIENT_CERT.
+      SSL_VERIFY_CLIENT: ${SSL_VERIFY_CLIENT:-}
+      # Compatibility knobs for SSL-intercepting proxies.
+      ENABLE_HTTP2: ${ENABLE_HTTP2:-true}
+      # When set (example: identity), forces the upstream app to return uncompressed assets.
+      UPSTREAM_ACCEPT_ENCODING: ${UPSTREAM_ACCEPT_ENCODING:-}
+      # Optional Let's Encrypt integration (used by the certbot service below).
+      LE_DOMAIN: ${LE_DOMAIN:-}
+      LE_EMAIL: ${LE_EMAIL:-}
+      # Optional overrides; when unset and LE_DOMAIN is set, nginx-cac defaults
+      # these to /etc/letsencrypt/live/$LE_DOMAIN/{fullchain.pem,privkey.pem}.
+      SERVER_NAME: ${SERVER_NAME:-}
+      SSL_CERTIFICATE: ${SSL_CERTIFICATE:-}
+      SSL_CERTIFICATE_KEY: ${SSL_CERTIFICATE_KEY:-}
     ports:
+      # Required for Let's Encrypt HTTP-01 challenges (must be reachable from the internet).
+      - "${NGINX_CAC_HTTP_PORT:-8080}:80"
       - "${NGINX_CAC_PORT:-8443}:443"
+    volumes:
+      - ./letsencrypt:/etc/letsencrypt
+      - ./certbot-www:/var/www/certbot
     depends_on:
       - echo
+    restart: unless-stopped
+
+  certbot:
+    image: certbot/certbot:latest
+    profiles: ["letsencrypt"]
+    environment:
+      LE_DOMAIN: ${LE_DOMAIN:-}
+      LE_EMAIL: ${LE_EMAIL:-}
+    volumes:
+      - ./letsencrypt:/etc/letsencrypt
+      - ./certbot-www:/var/www/certbot
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+          set -eu
+
+          : "$${LE_DOMAIN:?certbot: LE_DOMAIN must be set}"
+          : "$${LE_EMAIL:?certbot: LE_EMAIL must be set}"
+
+          mkdir -p /var/www/certbot
+
+          if [ ! -f "/etc/letsencrypt/live/$${LE_DOMAIN}/fullchain.pem" ]; then
+            echo "certbot: requesting initial certificate for $${LE_DOMAIN}" >&2
+            certbot certonly \
+              --webroot -w /var/www/certbot \
+              -d "$${LE_DOMAIN}" \
+              --email "$${LE_EMAIL}" \
+              --agree-tos \
+              --no-eff-email \
+              --non-interactive
+          else
+            echo "certbot: existing certificate found for $${LE_DOMAIN}" >&2
+          fi
+
+          while :; do
+            echo "certbot: running renew" >&2
+            certbot renew --quiet
+            sleep 12h
+          done
     restart: unless-stopped
 
   # Local test upstream to validate POST_AUTH_PROXY_UPSTREAM and forwarded identity headers.

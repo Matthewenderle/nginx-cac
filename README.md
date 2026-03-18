@@ -142,26 +142,105 @@ Combined, these two settings mean that every page load requires a fresh TLS
 handshake. If the CAC is no longer present when that handshake is attempted,
 the browser will be rejected.
 
+### Asset-heavy apps (Nuxt, etc.) note
+
+If you are proxying a modern SPA (Nuxt/Next/etc.) and see broken JS/CSS assets
+through this nginx proxy path (for example Firefox `NS_ERROR_CORRUPTED_CONTENT`),
+it can be caused by the strict `RECHECK_CAC=true` defaults closing the client
+connection after every response.
+
+Keep `RECHECK_CAC=true` but allow some connection reuse:
+
+* `RECHECK_CAC_KEEPALIVE_TIMEOUT=65s`
+* `RECHECK_CAC_KEEPALIVE_REQUESTS=1000`
+
 Set `RECHECK_CAC=false` to disable these extra checks and restore default nginx
 TLS session-caching behavior (useful in high-throughput scenarios where you
 prefer to allow TLS session resumption).
+
+## SSL inspection proxies (Menlo, etc.)
+
+Client-certificate authentication (CAC / mTLS) happens during the TLS handshake.
+If your network forces an SSL inspection proxy (for example Menlo) that
+terminates TLS and re-issues a new TLS connection to your origin, the client
+certificate will not reach this nginx instance.
+
+If you cannot bypass SSL inspection for your domain, you can run nginx in a
+compatibility mode that allows connections without a client certificate and
+forwards explicit headers so the upstream app can detect the difference.
+
+Environment variables:
+
+* `REQUIRE_CLIENT_CERT` (default: `true`) — when set to `false`, nginx uses
+  `ssl_verify_client optional`.
+* `ENABLE_HTTP2` (default: `true`) — set to `false` to disable HTTP/2 on the
+  client-facing connection (some TLS inspection proxies are unreliable with HTTP/2).
+* `UPSTREAM_ACCEPT_ENCODING` (default: empty) — when set to `identity`, forces
+  the upstream app to return uncompressed responses (mitigates proxies that
+  corrupt `Content-Encoding` on JS/CSS assets).
+* Upstream headers:
+  * `X-Client-Verified` — `SUCCESS` when a client cert was verified, `NONE` when no cert was provided.
+  * `X-Client-Cert-Present` — `1` when a client cert was presented, otherwise `0`.
+
+Security note: with `REQUIRE_CLIENT_CERT=false` nginx will allow non-mTLS
+connections. Your upstream must enforce authorization based on these headers if
+you still need to distinguish CAC-authenticated users.
+
+## Let's Encrypt (optional)
+
+This repo can optionally obtain and renew real TLS certificates via Let's Encrypt
+using a companion `certbot` container and the HTTP-01 challenge.
+
+Requirements:
+
+* A publicly reachable domain name pointing at this host.
+* Port 80 on this host must be reachable from the internet (for HTTP-01).
+
+Environment variables:
+
+* `LE_DOMAIN` — the hostname to request a cert for (example: `example.com`).
+* `LE_EMAIL` — email used for Let's Encrypt registration/expiry notices.
+* Optional: `SERVER_NAME` (defaults to `LE_DOMAIN` when set).
+* Optional: `SSL_CERTIFICATE` / `SSL_CERTIFICATE_KEY` (defaults to
+  `/etc/letsencrypt/live/$LE_DOMAIN/fullchain.pem` and `privkey.pem` when
+  `LE_DOMAIN` is set).
+
+How to run:
+
+1) Set `LE_DOMAIN` and `LE_EMAIL` in your `.env` (see `.env.example`).
+
+2) Start with the profile enabled:
+
+`docker compose --profile letsencrypt up -d`
+
+3) After the first successful issuance, restart nginx so it loads the new cert:
+
+`docker compose restart nginx-cac`
+
+Notes:
+
+* Renewals are attempted periodically by the `certbot` service. nginx must be
+  reloaded/restarted to pick up renewed certificates.
+* The default compose mapping exposes port 80 on the host via `NGINX_CAC_HTTP_PORT`.
+  For real issuance this must be `80` (override the default `8080`) and not blocked by a firewall.
+* On SELinux-enforcing hosts (Fedora/CentOS/RHEL/Rocky), bind mounts may need
+  relabeling. If certbot can’t read/write the mounted directories, add `:Z` to
+  the volume entries (example: `./letsencrypt:/etc/letsencrypt:Z`).
 
 ## `/auth/status` endpoint
 
 nginx always exposes a lightweight `/auth/status` endpoint that it handles
 **locally** (never proxied upstream, even in proxy mode).  Because
-`ssl_verify_client on` is enforced at the server level, any HTTP request that
-reaches this endpoint has already passed a full TLS client-certificate
-handshake.  Combined with `keepalive_timeout 0`, calling this endpoint from
-JavaScript forces a new TLS handshake on every invocation.
+it is handled by nginx, it is useful for probing whether the current request
+was backed by a verified client certificate.
 
-Successful response (`200 OK`):
+Successful response when a client cert is verified (`200 OK`):
 ```json
-{"verified":true,"dn":"CN=DOE.JOHN.1234567890,...","serial":"0A1B2C..."}
+{"verified":true,"clientCertPresent":1,"verify":"SUCCESS","dn":"CN=DOE.JOHN.1234567890,...","serial":"0A1B2C..."}
 ```
 
-If the CAC has been removed, the TLS handshake fails before any HTTP response
-is sent and the `fetch()` / `$fetch()` call throws a network error.
+If no client certificate is provided (for example behind an SSL inspection proxy),
+the response still returns `200` but reports `verified:false`.
 
 ### Nuxt 4 global route middleware
 

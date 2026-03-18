@@ -11,7 +11,7 @@
 # that?
 FROM alpine:latest
 
-RUN apk update && apk add nginx gettext && mkdir -p /run/nginx /www/data
+RUN apk update && apk add nginx gettext && mkdir -p /run/nginx /www/data /var/www/certbot
 
 # The Makefile will generate DoDRoots.crt (the DoD root + intermediate certs
 # concatenated) by downloading the certs from the cyber.mil IASE website. NGINX
@@ -32,6 +32,6 @@ COPY index.html /www/data/index.html
 
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-EXPOSE 443/tcp
+EXPOSE 80/tcp 443/tcp
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
