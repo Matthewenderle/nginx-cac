@@ -54,6 +54,24 @@ Where `<owner>` is your GitHub user or org name.
 If you push a tag like `v1.2.3`, the workflow also publishes
 `ghcr.io/<owner>/nginx-cac:v1.2.3`.
 
+## Apple Silicon (arm64) note
+
+If `docker pull ghcr.io/<owner>/nginx-cac:latest` fails with:
+
+`no matching manifest for linux/arm64/v8`
+
+then the image tag you are pulling was published as `linux/amd64` only.
+
+Immediate workaround (run the amd64 image under emulation):
+
+`docker pull --platform=linux/amd64 ghcr.io/<owner>/nginx-cac:latest`
+
+and when running:
+
+`docker run --platform=linux/amd64 ... ghcr.io/<owner>/nginx-cac:latest`
+
+If you are using Docker Compose, you can also set `DOCKER_DEFAULT_PLATFORM=linux/amd64` in your environment for that invocation.
+
 # Running With Docker Compose
 
 If you do not want local `make` dependencies, use the published GHCR image.
