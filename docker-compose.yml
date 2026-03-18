@@ -1,6 +1,9 @@
 services:
   nginx-cac:
     image: ghcr.io/matthewenderle/nginx-cac:latest
+    environment:
+      POST_AUTH_REDIRECT_URI: ${POST_AUTH_REDIRECT_URI:-/auth/success}
+      POST_AUTH_PROXY_UPSTREAM: ${POST_AUTH_PROXY_UPSTREAM:-}
     ports:
-      - "8443:443"
+      - "${NGINX_CAC_PORT:-8443}:443"
     restart: unless-stopped

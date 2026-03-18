@@ -1,10 +1,12 @@
 .PHONY: all run cert clean
 
+NGINX_CAC_PORT ?= 8443
+
 all: cert DoDRoots.crt
 	docker build -t nginx-cac:latest .
 
 run:
-	docker run -d -p 8443:443 nginx-cac:latest
+	docker run -d -p $(NGINX_CAC_PORT):443 nginx-cac:latest
 
 # Generate a self-signed certificate for the NGINX server side
 # Since I want it to use EC we have to generate the privkey separately

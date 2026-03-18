@@ -66,6 +66,36 @@ Update `<owner>` in that file and then run:
 
 `docker compose up -d`
 
+You can set defaults in a local `.env` file (used automatically by Docker
+Compose), for example:
+
+`NGINX_CAC_PORT=8443`
+`POST_AUTH_REDIRECT_URI=/auth/success`
+`POST_AUTH_PROXY_UPSTREAM=`
+
+To override the externally exposed port, set `NGINX_CAC_PORT`:
+
+`NGINX_CAC_PORT=9443 docker compose up -d`
+
+To override the post-auth redirect URI, set `POST_AUTH_REDIRECT_URI`:
+
+`POST_AUTH_REDIRECT_URI=/welcome docker compose up -d`
+
+To proxy to another host after successful CAC/PIN auth and forward identity
+headers, set `POST_AUTH_PROXY_UPSTREAM`:
+
+`POST_AUTH_PROXY_UPSTREAM=https://upstream.example.mil docker compose up -d`
+
+When `POST_AUTH_PROXY_UPSTREAM` is set, the `/auth/success` endpoint will proxy
+to that upstream and send these headers:
+
+* `X-Subject-DN`
+* `X-Client-Verified`
+* `X-Client-Serial`
+* `X-Forwarded-Proto`
+* `X-Forwarded-For`
+* `X-Original-URI`
+
 To stop:
 
 `docker compose down`
@@ -75,7 +105,11 @@ To stop:
 From there you can run it by using `make run`.
 
 This will start a new container based on the image built, exposing container
-port 443 on host port 8443.
+port 443 on host port 8443 by default.
+
+To use a different host port:
+
+`NGINX_CAC_PORT=9443 make run`
 
 Use `docker ps` to ensure the new container is actually running.
 
@@ -86,7 +120,19 @@ CAC-enabled websites, using PCSC Lite, the CACKey middleware, and by installing
 the DoD root certs **and intermediate CA certs** into the NSS keystore.
 
 With "real" CAC sites already working, testing for me was a matter of going to
-`https://localhost:8443/`.
+`https://localhost:$NGINX_CAC_PORT/` (or `https://localhost:8443/` if you did
+not override the default).
+
+After successful CAC/PIN client authentication, NGINX now redirects `/` to
+`/auth/success`.
+
+If you want a different redirect URI, set `POST_AUTH_REDIRECT_URI` in `.env`
+or in the shell before launching the container.
+
+If `POST_AUTH_REDIRECT_URI` points to another host (absolute URL), the browser
+will be redirected there but request headers from this server are not forwarded
+by the redirect itself. Use `POST_AUTH_PROXY_UPSTREAM` if you need header
+forwarding.
 
 I believe at this point it should already ask for the CAC PIN (as part of SSL
 mutual auth) and then show an error page that the site is untrusted.
