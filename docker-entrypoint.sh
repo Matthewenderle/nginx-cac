@@ -56,7 +56,7 @@ if [ -n "$POST_AUTH_PROXY_UPSTREAM" ]; then
   cat > /tmp/post-auth-location.conf <<EOF
     location = ${post_auth_target_path} {
         add_header X-Auth-Proxy-Mode upstream always;
-        resolver 1.1.1.1 8.8.8.8 ipv6=off valid=300s;
+        resolver 127.0.0.11 1.1.1.1 8.8.8.8 ipv6=off valid=300s;
         resolver_timeout 5s;
         proxy_http_version 1.1;
         proxy_set_header Connection "";

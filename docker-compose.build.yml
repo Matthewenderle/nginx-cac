@@ -1,0 +1,6 @@
+services:
+  nginx-cac:
+    image: nginx-cac:local
+    build:
+      context: .
+      dockerfile: Dockerfile

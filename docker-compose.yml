@@ -1,12 +1,17 @@
 services:
   nginx-cac:
     image: ghcr.io/matthewenderle/nginx-cac:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
     environment:
       POST_AUTH_REDIRECT_URI: ${POST_AUTH_REDIRECT_URI:-/auth/success}
       POST_AUTH_PROXY_UPSTREAM: ${POST_AUTH_PROXY_UPSTREAM:-}
     ports:
       - "${NGINX_CAC_PORT:-8443}:443"
+    depends_on:
+      - echo
+    restart: unless-stopped
+
+  # Local test upstream to validate POST_AUTH_PROXY_UPSTREAM and forwarded identity headers.
+  # Usage: POST_AUTH_PROXY_UPSTREAM=http://echo:80/ docker compose up -d
+  echo:
+    image: ealen/echo-server:latest
     restart: unless-stopped

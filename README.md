@@ -47,16 +47,16 @@ manually from the Actions tab.
 
 The pushed image name is:
 
-`ghcr.io/<owner>/nginx-cac`
+`ghcr.io/matthewenderle/nginx-cac`
 
-Where `<owner>` is your GitHub user or org name.
+Where `matthewenderle` is your GitHub user or org name.
 
 If you push a tag like `v1.2.3`, the workflow also publishes
-`ghcr.io/<owner>/nginx-cac:v1.2.3`.
+`ghcr.io/matthewenderle/nginx-cac:v1.2.3`.
 
 ## Apple Silicon (arm64) note
 
-If `docker pull ghcr.io/<owner>/nginx-cac:latest` fails with:
+If `docker pull ghcr.io/matthewenderle/nginx-cac:latest` fails with:
 
 `no matching manifest for linux/arm64/v8`
 
@@ -64,11 +64,11 @@ then the image tag you are pulling was published as `linux/amd64` only.
 
 Immediate workaround (run the amd64 image under emulation):
 
-`docker pull --platform=linux/amd64 ghcr.io/<owner>/nginx-cac:latest`
+`docker pull --platform=linux/amd64 ghcr.io/matthewenderle/nginx-cac:latest`
 
 and when running:
 
-`docker run --platform=linux/amd64 ... ghcr.io/<owner>/nginx-cac:latest`
+`docker run --platform=linux/amd64 ghcr.io/matthewenderle/nginx-cac:latest`
 
 If you are using Docker Compose, you can also set `DOCKER_DEFAULT_PLATFORM=linux/amd64` in your environment for that invocation.
 
@@ -78,9 +78,9 @@ If you do not want local `make` dependencies, use the published GHCR image.
 
 The included [`docker-compose.yml`](docker-compose.yml) uses:
 
-`ghcr.io/<owner>/nginx-cac:latest`
+`ghcr.io/matthewenderle/nginx-cac:latest`
 
-Update `<owner>` in that file and then run:
+Update `matthewenderle` in that file and then run:
 
 `docker compose up -d`
 
@@ -92,7 +92,11 @@ are running the latest published GHCR image:
 If you are actively editing this repo and want Compose to rebuild using your
 local files:
 
-`docker compose up -d --build`
+1) Generate the required cert files (see `make` in this repo), then
+
+2) Run Compose with the build override:
+
+`docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build`
 
 You can set defaults in a local `.env` file (used automatically by Docker
 Compose), for example:
@@ -113,6 +117,23 @@ To proxy to another host after successful CAC/PIN auth and forward identity
 headers, set `POST_AUTH_PROXY_UPSTREAM`:
 
 `POST_AUTH_PROXY_UPSTREAM=https://upstream.example.mil docker compose up -d`
+
+## Local test upstream (included)
+
+The included [docker-compose.yml](docker-compose.yml) now also starts a small `echo`
+service you can use as a test upstream.
+
+Run:
+
+`POST_AUTH_PROXY_UPSTREAM=http://echo:80/ docker compose up -d`
+
+Then browse to:
+
+`https://localhost:$NGINX_CAC_PORT/`
+
+After successful CAC auth, NGINX will proxy to the `echo` service and you should
+see a response body that includes the request headers NGINX forwarded (including
+`X-Subject-DN`, `X-Client-Verified`, and `X-Client-Serial`).
 
 If proxy mode is enabled and `POST_AUTH_REDIRECT_URI` is an absolute URL,
 startup will force redirect to `/auth/success` so this NGINX instance can
