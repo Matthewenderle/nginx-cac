@@ -4,6 +4,7 @@ services:
     environment:
       POST_AUTH_REDIRECT_URI: ${POST_AUTH_REDIRECT_URI:-/auth/success}
       POST_AUTH_PROXY_UPSTREAM: ${POST_AUTH_PROXY_UPSTREAM:-}
+      RECHECK_CAC: ${RECHECK_CAC:-true}
     ports:
       - "${NGINX_CAC_PORT:-8443}:443"
     depends_on:

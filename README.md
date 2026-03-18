@@ -118,6 +118,34 @@ headers, set `POST_AUTH_PROXY_UPSTREAM`:
 
 `POST_AUTH_PROXY_UPSTREAM=https://upstream.example.mil docker compose up -d`
 
+To control whether the CAC is re-checked on every request, set `RECHECK_CAC`
+(default: `true`):
+
+`RECHECK_CAC=false docker compose up -d`
+
+When `RECHECK_CAC=true` (the default), nginx:
+* Sets `keepalive_timeout 0` and `keepalive_requests 1` — **this is the critical
+  setting.** As long as a TCP/TLS connection stays open, nginx does not repeat
+  the TLS handshake between requests, so a removed CAC is invisible until the
+  connection is torn down. Closing the connection after every response forces
+  the browser to open a fresh connection (full TLS handshake, client cert
+  re-verified) on the very next navigation.
+* Disables TLS session tickets and the server-side session ID cache — prevents
+  the browser from resuming a previously authenticated TLS session on a new
+  connection (which would bypass the client-cert check even after you close the
+  old connection).
+* Adds `Cache-Control: no-store` — prevents the browser from serving a stale
+  page from its HTTP cache without making a real request, which would avoid
+  the connection+handshake entirely.
+
+Combined, these two settings mean that every page load requires a fresh TLS
+handshake. If the CAC is no longer present when that handshake is attempted,
+the browser will be rejected.
+
+Set `RECHECK_CAC=false` to disable these extra checks and restore default nginx
+TLS session-caching behavior (useful in high-throughput scenarios where you
+prefer to allow TLS session resumption).
+
 ## Local test upstream (included)
 
 The included [docker-compose.yml](docker-compose.yml) now also starts a small `echo`

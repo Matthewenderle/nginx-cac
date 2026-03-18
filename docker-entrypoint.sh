@@ -149,12 +149,42 @@ EOF
   sed -i "s|__POST_AUTH_TARGET_PATH__|${post_auth_target_path}|g" /tmp/post-auth-location.conf
 fi
 
+# RECHECK_CAC (default: true) — disable TLS session resumption and browser caching so the
+# client certificate is re-checked on every new request rather than being carried over from
+# a cached TLS session.
+: "${RECHECK_CAC:=true}"
+if [ "$RECHECK_CAC" = "true" ]; then
+  cat > /tmp/recheck-cac.conf <<'EOF'
+    # Disable TLS session tickets (RFC 5077) and server-side session ID cache so the
+    # browser cannot resume a previous TLS session that had a valid client cert.
+    ssl_session_tickets off;
+    ssl_session_cache   off;
+
+    # Close the TCP connection after every response.
+    # This is the critical setting: as long as the TCP/TLS connection is kept
+    # alive, nginx does NOT re-run the TLS handshake between requests, so it
+    # cannot detect a removed CAC.  With keepalive_timeout 0 the browser gets
+    # "Connection: close" and must open a fresh TCP+TLS connection (full
+    # handshake, client-cert re-verified) for every subsequent request.
+    keepalive_timeout  0;
+    keepalive_requests 1;
+
+    # Prevent the browser HTTP cache from serving stale pages without hitting
+    # the network (and therefore without triggering a new TLS handshake).
+    add_header Cache-Control "no-store" always;
+EOF
+else
+  : > /tmp/recheck-cac.conf
+fi
+
 sed "/__POST_AUTH_TARGET_LOCATION__/r /tmp/post-auth-location.conf" /etc/nginx/http.d/default.conf.template \
   | sed "/__POST_AUTH_TARGET_LOCATION__/d" \
   | sed "/__ROOT_LOCATION__/r /tmp/root-location.conf" \
   | sed "/__ROOT_LOCATION__/d" \
   | sed "/__MAIN_LOCATION__/r /tmp/main-location.conf" \
   | sed "/__MAIN_LOCATION__/d" \
+  | sed "/__RECHECK_CAC_SETTINGS__/r /tmp/recheck-cac.conf" \
+  | sed "/__RECHECK_CAC_SETTINGS__/d" \
   | envsubst '${POST_AUTH_REDIRECT_URI}' \
   > /etc/nginx/http.d/default.conf
 
