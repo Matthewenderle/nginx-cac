@@ -66,6 +66,16 @@ Update `<owner>` in that file and then run:
 
 `docker compose up -d`
 
+By default this will use the image tag already present locally. To ensure you
+are running the latest published GHCR image:
+
+`docker compose pull && docker compose up -d`
+
+If you are actively editing this repo and want Compose to rebuild using your
+local files:
+
+`docker compose up -d --build`
+
 You can set defaults in a local `.env` file (used automatically by Docker
 Compose), for example:
 
@@ -86,8 +96,15 @@ headers, set `POST_AUTH_PROXY_UPSTREAM`:
 
 `POST_AUTH_PROXY_UPSTREAM=https://upstream.example.mil docker compose up -d`
 
+If proxy mode is enabled and `POST_AUTH_REDIRECT_URI` is an absolute URL,
+startup will force redirect to `/auth/success` so this NGINX instance can
+forward headers upstream.
+
 When `POST_AUTH_PROXY_UPSTREAM` is set, the `/auth/success` endpoint will proxy
-to that upstream and send these headers:
+to that upstream and send these headers.
+
+If you override `POST_AUTH_REDIRECT_URI` to a different path (for example,
+`/index.html`), that path becomes the proxied endpoint instead.
 
 * `X-Subject-DN`
 * `X-Client-Verified`
@@ -95,6 +112,20 @@ to that upstream and send these headers:
 * `X-Forwarded-Proto`
 * `X-Forwarded-For`
 * `X-Original-URI`
+
+The proxy path enables TLS SNI automatically for HTTPS upstreams.
+
+For debugging, responses include `X-Auth-Proxy-Mode: upstream` when upstream
+proxy mode is active (or `local` when serving local content).
+
+Note: forwarded identity headers are sent on the *server-to-server* request from
+this NGINX instance to your upstream. You will not see them in the browser's
+request headers panel; check upstream logs to confirm receipt.
+
+Also note: a browser redirect (`302 Location: https://other-host/`) cannot
+"carry" these headers into the next request, because the next request is a new
+client-to-server request made by the browser. Use `POST_AUTH_PROXY_UPSTREAM` if
+the upstream needs the identity headers.
 
 To stop:
 
