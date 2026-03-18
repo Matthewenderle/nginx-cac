@@ -146,6 +146,61 @@ Set `RECHECK_CAC=false` to disable these extra checks and restore default nginx
 TLS session-caching behavior (useful in high-throughput scenarios where you
 prefer to allow TLS session resumption).
 
+## `/auth/status` endpoint
+
+nginx always exposes a lightweight `/auth/status` endpoint that it handles
+**locally** (never proxied upstream, even in proxy mode).  Because
+`ssl_verify_client on` is enforced at the server level, any HTTP request that
+reaches this endpoint has already passed a full TLS client-certificate
+handshake.  Combined with `keepalive_timeout 0`, calling this endpoint from
+JavaScript forces a new TLS handshake on every invocation.
+
+Successful response (`200 OK`):
+```json
+{"verified":true,"dn":"CN=DOE.JOHN.1234567890,...","serial":"0A1B2C..."}
+```
+
+If the CAC has been removed, the TLS handshake fails before any HTTP response
+is sent and the `fetch()` / `$fetch()` call throws a network error.
+
+### Nuxt 4 global route middleware
+
+Client-side routers (Vue Router, NuxtLink) never make a new HTTP request for
+page transitions, so nginx cannot re-check the CAC on navigation.  Add the
+following global route middleware to your Nuxt 4 project to intercept every
+client-side navigation, probe `/auth/status`, and fall back to a hard redirect
+(which does trigger a full TLS handshake, and therefore a CAC re-check) if the
+probe fails.
+
+**`middleware/cac-auth.global.ts`**
+```ts
+export default defineNuxtRouteMiddleware(async (to) => {
+  // Runs on the server during SSR — skip, nginx already enforced the TLS check.
+  if (import.meta.server) return
+
+  try {
+    await $fetch('/auth/status')
+  } catch {
+    // TLS handshake failed (CAC removed) or network error.
+    // Abort the router navigation and force a real page load so nginx can
+    // reject the connection at the TLS layer and show the cert-required error.
+    if (import.meta.client) {
+      window.location.assign(to.fullPath)
+    }
+    return abortNavigation()
+  }
+})
+```
+
+> **How it works:** `$fetch('/auth/status')` opens a new TCP connection
+> (because `keepalive_timeout 0` closes the previous one).  nginx requires a
+> client certificate for that connection.  If the CAC is present the fetch
+> succeeds silently and Vue Router completes the navigation normally.  If the
+> CAC is absent the TLS handshake is rejected, `$fetch` throws, and
+> `window.location.assign` triggers a hard browser navigation — which also
+> fails at the TLS layer, showing the browser's "client certificate required"
+> error.
+
 ## Local test upstream (included)
 
 The included [docker-compose.yml](docker-compose.yml) now also starts a small `echo`

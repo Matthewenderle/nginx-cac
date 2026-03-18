@@ -177,10 +177,26 @@ else
   : > /tmp/recheck-cac.conf
 fi
 
+# /auth/status — a minimal endpoint nginx handles directly (never proxied upstream).
+# Calling it from client-side code forces a new TCP+TLS handshake (keepalive_timeout 0)
+# which re-checks the CAC.  If the card is absent the TLS handshake fails and the fetch
+# throws a network error, which the caller can treat as "session expired".
+cat > /tmp/auth-status-location.conf <<'EOF'
+    location = /auth/status {
+        add_header Content-Type  "application/json" always;
+        add_header Cache-Control "no-store"          always;
+        # Any request that reaches this block has already passed the TLS client-cert
+        # handshake enforced at the server level (ssl_verify_client on).
+        return 200 '{"verified":true,"dn":"$ssl_client_s_dn","serial":"$ssl_client_serial"}';
+    }
+EOF
+
 sed "/__POST_AUTH_TARGET_LOCATION__/r /tmp/post-auth-location.conf" /etc/nginx/http.d/default.conf.template \
   | sed "/__POST_AUTH_TARGET_LOCATION__/d" \
   | sed "/__ROOT_LOCATION__/r /tmp/root-location.conf" \
   | sed "/__ROOT_LOCATION__/d" \
+  | sed "/__AUTH_STATUS_LOCATION__/r /tmp/auth-status-location.conf" \
+  | sed "/__AUTH_STATUS_LOCATION__/d" \
   | sed "/__MAIN_LOCATION__/r /tmp/main-location.conf" \
   | sed "/__MAIN_LOCATION__/d" \
   | sed "/__RECHECK_CAC_SETTINGS__/r /tmp/recheck-cac.conf" \
